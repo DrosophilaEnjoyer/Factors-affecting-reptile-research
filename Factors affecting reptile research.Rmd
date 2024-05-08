@@ -1,0 +1,1086 @@
+---
+title: "Reptile Research output"
+author: ""
+date: "2024-01-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+loading all the packages we will need
+
+```{r}
+library(dismo)
+library(rworldmap)
+library(sf)
+library(geodata) 
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(glmmTMB)
+library(DHARMa)
+library(bbmle)
+library(janitor)
+library(phylobase) 
+library(maps)
+library(lme4)
+library(arm)
+library(ggfortify)
+library(pscl)
+library(gridExtra)
+library(tidyverse)
+library(phylosignal)
+library(Matrix)
+library(multcomp)
+library(MuMIn)
+library(car)
+library(usdm)
+```
+
+set our working directory and call our data set
+
+```{r}
+setwd("")
+AllReptiles <- read.csv("All_Reptiles.csv")
+unique(AllReptiles$Suborder)
+```
+
+now we have the data lets look at which
+
+```{r}
+ sum(AllReptiles$Npapers3rdApproach) #total number of papers
+
+OnIsland <-  subset(AllReptiles, Inisland_reptiles == "Yes")
+OnIsland
+sum(OnIsland$Npapers3rdApproach)
+
+OffIsland <- subset(AllReptiles, Inisland_reptiles == "No")
+
+top10 <- dplyr::top_n(OnIsland, 10, Npapers3rdApproach); sum(top10$Npapers3rdApproach); rm(top10)
+top10 <- dplyr::top_n(OffIsland, 10, Npapers3rdApproach); sum(top10$Npapers3rdApproach); rm(top10)
+
+island_papers <- AllReptiles[AllReptiles$Inisland_reptiles == "Yes", "Npapers1stApproach"]
+mainland_papers <- AllReptiles[AllReptiles$Inisland_reptiles == "No", "Npapers1stApproach"]
+
+average_papers <- wilcox.test(island_papers, mainland_papers)
+
+
+```
+
+90617 total papers
+
+2438 island restricted reptile species contain a total of 6586 papers the top 10 most studied species account for 1712 of these papers or 26%. The mean number of papers per species is 2.7
+
+out of the 8094 non island restricted reptiles 84031 papers are published on them, the top 10 most studied species account for 13463 of this or 16% of papers. The mean number of papers per species is 10.4
+
+```{r}
+length(which(OnIsland$Npapers1stApproach==0)) 
+length(which(OffIsland$Npapers1stApproach==0)) 
+
+length(which(OnIsland$Npapers1stApproach<=5))
+```
+
+1161 island restricted species have no publications, this is 47.6% of species.
+
+A vast majority (2209 or 90.6%) of island species have less than 5 studies
+
+```{r}
+AllReptiles <- AllReptiles %>%
+   mutate(tenth_log = log(Npapers3rdApproach, 10)) #taking the log10 of the papers so they can fit on graph easier
+
+point_colors <- c("Yes" = "darkblue", "No" = "red")
+point_alpha <- c("Yes" = 0.5, "No" = 0.4)
+
+
+  fig1 <- ggplot(AllReptiles, aes(x = Year, y = Npapers1stApproach, label = Species, color = Inisland_reptiles)) +
+  geom_jitter(aes(alpha = ifelse(Inisland_reptiles == "Yes", 0.7, 0.2)), size = 2, fill = "white", shape = 19) +  # Set shape to 21 for better visibility
+  geom_text(aes(label = ifelse(Npapers1stApproach > 800, as.character(Species), '')), size = 3, hjust = -0.05, vjust = 0.05) +
+  labs(title = "Number of Papers Published on Reptile Species Over Time",
+       x = "Year of Description", y = "Number of Resaerch Outputs",
+       color = "Island-restricted Reptile") +
+  theme_minimal(base_size = 10) +
+  theme(axis.title = element_text(face = "bold"),
+        axis.text = element_text(size = 8),
+        axis.line = element_line(colour = "black")) +
+  scale_color_manual(values = point_colors) +  # Set custom point colors
+  scale_alpha_continuous(range = c(0.2, 0.7), guide = "none")  # Hide alpha legend
+
+
+print(fig1)
+
+
+
+ggplot(AllReptiles, aes(x = Year, y = Npapers1stApproach)) +
+  geom_point(alpha = 0.3, color = "blue") +  # Reduce opacity and change color
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  # Add a linear trend line
+  labs(title = "Number of Papers Published on Reptile Species Over Time",
+       x = "Publication Year",
+       y = "Number of Papers",
+       color = "Island-restricted reptile") +
+  scale_x_continuous(labels = NULL) +  # Format x-axis labels with commas
+  scale_y_continuous(labels = NULL) +  # Format y-axis labels with commas
+  theme_minimal()  # Apply a minimal theme
+
+
+##remake the onIslands dataset with the new log10
+
+OnIsland <-  subset(AllReptiles, Inisland_reptiles == "Yes")
+
+#now we make one just for islands
+
+(fig2 <-  ggplot(OnIsland, aes(x = Year, y = Npapers1stApproach, label = Species)) +
+   geom_point(alpha = 0.7, size = 1) +
+   geom_text(aes(label = ifelse(Npapers1stApproach > 100, as.character(Species), '')),
+             size = 3, hjust = -0.05, vjust = 0.05) +
+   labs(x = NULL, y = "Number of papers") +
+   theme(panel.grid.minor = element_blank(),
+         panel.grid.major = element_blank(),
+         panel.background = element_blank(),
+         axis.title = element_text(size = 7, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         axis.text = element_text(size = 6, colour = 'black')))
+
+
+ 
+```
+
+Is biogeographic realm a factor?
+
+```{r}
+#for islands
+
+(mapon <- ggplot(OnIsland[!is.na(OnIsland$MainBiogRealm), ], 
+                 aes(x = log2(Npapers3rdApproach+1)))+
+    geom_histogram(fill='grey50', color='grey50')+
+    scale_fill_brewer(type = 'qual', palette = 2)+
+    labs(title = "Distribution of research output across biogeographic realms on islands",
+    x=expression(Log[2]~ "number of papers"), y="Count")+
+    theme_bw()+
+    theme(legend.title = element_blank(),
+          legend.position = 'none')+
+    facet_wrap(~MainBiogRealm, nrow = 4, ncol = 3, scales = "free_y"))
+
+
+
+#for mainland
+(mapoff <- ggplot(OffIsland[!is.na(OffIsland$MainBiogRealm), ], 
+                 aes(x = log2(Npapers3rdApproach+1)))+
+    geom_histogram(fill='grey50', color='grey50')+
+    scale_fill_brewer(type = 'qual', palette = 2)+
+    labs(title = "Distribution of research output across biogeographic realms on mainlands",
+    x=expression(Log[2]~ "number of papers"), y="Count")+
+    theme_bw()+
+    theme(legend.title = element_blank(),
+          legend.position = 'none')+
+    facet_wrap(~MainBiogRealm, nrow = 4, ncol = 3, scales = "free_y"))
+
+grid.arrange(mapon, mapoff, ncol = 2)
+
+
+
+```
+
+As we would expect more studied species across all realms
+
+Does IUCN redlist category play a role in the number of papers published on a species
+
+```{r}
+right_order <- c("DD", "LC", "NT", "VU", "EN", "CR", "EW") #Making sure the categories are in the correct order for the graph, removing the extinct category due to outliers and not being relevent 
+AllReptiles$ThreatStatus <- factor(AllReptiles$ThreatStatus, levels = right_order)
+
+
+OnIsland <-  subset(AllReptiles, Inisland_reptiles == "Yes", ThreatStatus != "EX") #have to redefine on and off island so the right order goes through
+OffIsland <- subset(AllReptiles, Inisland_reptiles == "No", ThreatStatus != "EX")
+OnIsland
+
+#MAINLAND
+
+IUCN_bar_mainland <- ggplot(OffIsland, aes(x = ThreatStatus, y = AvgStudiesPerSpecies_Mainland, fill = ThreatStatus)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_hline(yintercept = 11.678, linetype = "dashed", color = "red", size = 1) + #means not including NA or extinct species
+  labs(title = "Average Research Outputs by IUCN Category the mainland",
+       x = " IUCN Categories",
+       y = "Average research output per species") +
+  theme_minimal()
+
+IUCN_bar_mainland
+
+
+#ISLAND
+
+IUCN_bar_island <- ggplot(AllReptiles, aes(x = ThreatStatus, y = AvgStudiesPerSpecies_Island, fill = ThreatStatus)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_hline(yintercept = 2.154, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "Average Research Outputs by IUCN Category on islands",
+       x = " IUCN Categories",
+       y = "Average research output per species") +
+  theme_minimal()
+
+IUCN_bar_island
+grid.arrange(IUCN_bar_island, IUCN_bar_mainland, ncol = 2) #plotting them together
+
+
+#########one with them side by side 
+#need a new dataframe 
+
+right_order2 <- c("DD_Island", "DD_Mainland", "LC_Island", "LC_Mainland", "NT_Island", "NT_Mainland", "VU_Island", "VU_Mainland", "EN_Island", "EN_Mainland", "CR_Island", "CR_Mainland", "EW_Island", "EW_Mainland") #Making sure the categories are in the correct order for the graph, removing the extinct category due to outliers and not being relevent 
+
+sum(is.na(AllReptiles$ThreatStatus_Plus))
+
+     AllReptiles$ThreatStatus_Plus <- factor(AllReptiles$ThreatStatus_Plus, levels = right_order2)
+
+
+averages <- aggregate(Npapers1stApproach ~ ThreatStatus + Inisland_reptiles, data = AllReptiles, FUN = mean)
+     
+     
+
+ggplot(AllReptiles, aes(x = ThreatStatus, y = Npapers1stApproach, fill = Inisland_reptiles)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.9), width = 0.1) +
+  labs(title = "Average Research Output Per Species by IUCN Category",
+       x = "IUCN Category", y = "Average Research Output",
+       fill = "Island Restricted") +
+  scale_fill_manual(values = c("Yes" = "gray40", "No" = "lightgrey")) +
+  scale_x_discrete(labels = c("NA" = "NC")) + 
+  theme_minimal()
+
+#cant do boxplots as the data is just average papers per category and also having some issues with getting them to plot in the right order
+
+
+
+IUCN_boxplot <- ggplot(AllReptiles, aes(x = ThreatStatus, y = Npapers1stApproach, fill = Inisland_reptiles)) +
+  geom_boxplot() +
+  labs(title = "Average Research",
+       x = "IUCN Categories",
+       y = "Average research output per threat category") +
+  theme_minimal()
+
+IUCN_boxplot #looks pretty bad
+```
+
+We can see from this graph that the grand mean for papers published is far higher for mainland species which is what we established previously but here we can see that within IUCN categories some are far more studied than others. Species that are extinct in the wild are not studied on islands at all and below th mean for the mainland populations and vulnerable species on the mainland are far more likely to be studied compared to their island counterparts as they are far above the mainland mean where as island species are only sightly above
+
+Running an Mixed effect models
+
+```{r}
+
+OnIsland_NoBlanks <- OnIsland[complete.cases(OnIsland$ThreatStatus), ] #removing the blank NA species from threat status so we can run the LM
+OffIsland_NoBlanks <- OffIsland[complete.cases(OffIsland$ThreatStatus), ]
+
+AllReptiles_NoBlank <- AllReptiles[complete.cases(AllReptiles$ThreatStatus), ]
+
+sum(!complete.cases(AllReptiles_NoBlank$ThreatStatus))
+
+
+lm1 <- lm(Npapers3rdApproach ~ Inisland_reptiles * ThreatStatus, data = AllReptiles_NoBlank)
+summary(lm1)
+lm1
+
+# above we ran a ancova to study the differences in average number of studies while controlling for the affect of IUCN categories. Average_studies_per_IUCN is the average number of studies for species in each IUCN category and is our response variable. InIsland_reptiles is telling us if  the species is found on islands or not and is our predictor variable. ThreatStatus tells us the species IUCN status and is our categorical variable. This shows that after accounting for covariables there is a statistacally significant difference between the number of studies on the island and mainlan for each IUCN catagory
+
+t_test <- t.test(Npapers3rdApproach ~ Inisland_reptiles, data = AllReptiles_NoBlank, var.equal = FALSE)
+
+t_test
+
+IUCN_glm <- glm(Npapers3rdApproach ~ ThreatStatus * Inisland_reptiles, data = AllReptiles_NoBlank, family = poisson(link = log))
+summary(IUCN_glm)
+IUCN_glm
+
+#another test using Welch's t-test which is robust to unequal varaince between groups also results in a significant result accepting my hypothesis 
+
+Kruskal <- kruskal.test(Avg_studies_per_IUCN ~ Inisland_reptiles, data = AllReptiles_NoBlank)
+Kruskal
+
+IUCN_Kruskal <- kruskal.test(Avg_studies_per_IUCN ~ ThreatStatus, data = AllReptiles)
+IUCN_Kruskal
+
+confint(lm1)
+
+lm_intercept <- coef(lm1)[1]
+lm_slope <- coef(lm1)[2]
+
+
+```
+
+GLMM and posthoc on IUCN status data
+
+```{r}
+#adding new collum which combines island mainland data and iucn status
+AllReptiles <- AllReptiles %>%
+ mutate(ThreatStatus_Plus = ifelse(ThreatStatus == "", "NA", paste(ThreatStatus, ifelse(Inisland_reptiles == "Yes", "_Island", "_Mainland"), sep = "_")))
+AllReptiles
+
+#now run the GLMM
+
+GLMMIUCN_NB <- glmer(Npapers1stApproach ~ ThreatStatus_Plus + (1|Family), data = AllReptiles, family  = negative.binomial(theta = 1)) 
+
+
+simulateResiduals(fittedModel = GLMMIUCN_NB, plot = T, n = 1000) 
+testDispersion(GLMMIUCN_NB, plot = F, type = 'PearsonChisq', alternative = 'greater') #did not fit well with the negative binomial but we dont have many other options
+
+IUCN_output<-summary(GLMMIUCN_NB)
+
+
+
+GLMMrealm_coef <- fixef(GLMMIUCN_NB)
+
+GLMMIUCN_output <- capture.output(summary(GLMMIUCN_NB))
+GLMMIUCN_file <- "glmm_iucn.txt"
+writeLines(GLMMIUCN_output, GLMMIUCN_file)
+
+### POST HOC P VALUE COMPARISON
+
+
+
+IUCN_MCP <- glht(GLMMIUCN_NB, linfct = mcp(ThreatStatus_Plus = "Tukey"))
+
+summary(IUCN_MCP)
+IUCN_summary <- capture.output(summary(IUCN_MCP))
+
+# Define the file path for saving the text file
+IUCNMC_file <- "multiple_comparison_results.csv"
+
+# Write the information to a text file
+write.csv(IUCN_summary, IUCNMC_file)
+```
+
+all tests even when data is not normally distributed and this is taken account for in the Kruskal Wallace test we can see that there is a significantly different number of studies between island and mainland species of the same IUCN categories.
+
+Graphing data to see if the bio geographic realm is a factor in how reptile species are researched
+
+```{r}
+realm_study_spread <-
+  ggplot(data = AllReptiles, aes(x = MainBiogRealm, y = tenth_log)) +
+  facet_wrap(~Inisland_reptiles) +
+  geom_boxplot() +
+  geom_smooth(formula = y ~ x, method = lm) +
+  labs(x = "Realm", y = "Studies (log2 scale)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+realm_study_spread
+
+filtered_data<- AllReptiles %>% filter(RealmPlus != "NA")
+
+filtered_data <- filtered_data %>%
+  group_by(RealmPlus) %>%
+  mutate(AvgPapersPerSpeciesRealm = sum(Npapers1stApproach) / n())
+
+Realm_Bar <- ggplot(filtered_data, aes(x = RealmPlus, y = AvgPapersPerSpeciesRealm, fill = RealmPlus)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Research",
+       x = "Biogeogrpahic Realm ",
+       y = "Average Research Output") +
+  theme_minimal()
+
+
+Realm_Bar
+
+
+
+realmplus_study_spread <-
+  ggplot(data = filtered_data, aes(x = RealmPlus, y = tenth_log)) +
+  geom_boxplot() +
+  geom_smooth(formula = y ~ x, method = lm) +
+  labs(x = "Biogeographic Realm", y = "Studies (log10)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+realmplus_study_spread
+
+
+ggplot(filtered_data, aes(x = MainBiogRealm, y = Npapers1stApproach, fill = Inisland_reptiles)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.9), width = 0.1) +
+  labs(title = "Average Research Output Per Species by Biogeographic Realm",
+       x = "Biogeographic Realm", y = "Average Research Output",
+       fill = "Island Restricted") +
+  scale_fill_manual(values = c("Yes" = "gray40", "No" = "lightgrey")) +
+  scale_x_discrete(labels = c("Australasi" = "Australasia")) +
+  theme_minimal()
+
+
+
+
+Realm_Kruskal <- kruskal.test(Npapers1stApproach ~ MainBiogRealm, data = AllReptiles)
+Realm_Kruskal
+
+Realm_lm <- lm(Npapers3rdApproach ~ Inisland_reptiles * MainBiogRealm, data = AllReptiles_NoBlank)
+summary(Realm_lm)
+
+
+glm_Realm <- glm(Npapers3rdApproach ~ MainBiogRealm * Inisland_reptiles, data = AllReptiles_NoBlank, family = poisson(link = log))
+summary(glm_Realm)
+glm_Realm
+
+
+```
+
+here we run various models to accurately model the relationship between the number of papers published on a species and the bio geographic realm they are found in for islands and the mainland. We are trying to predict how the number of papers changes based on the realm. The categorical predictor is the MainBiogRealm categorical variable. Another predictor is Inisland_reptiles which tells us if the species is found on islands or mainland as we expect this to influence the number of papers published on a species. Its inclusion in the model allows us to assess how the average count of papers differs between island and mainland species. As the interaction term of Inisland_reptiles is significant at across most of the regions it suggests the effect of the bio geographic realm on the number of papers published depends on whether the species is found on the island or the mainland. To conclude this model suggests that the average number of studies is significantly influenced by the bio geographical realm, whether the reptile is on an island, and the interaction between these factors.
+
+we can also interpret the coefficients which tell us compared to the reference intercept an island reptile has an overall negative impact on the log odds meaning being on an island has negative impact on the number of papers that would be published on the species. The largest change in log odds between island and mainland is in the Neartic realm. This large negative value of -2.51341 indicates that being on an island in the Neartic realm is associated with a decrease in the number of studies.
+
+We now want to run a GLMM for the same premise of biogeographic realms being different between islands and mainlands
+
+```{r}
+#we need to combine the data on realm and if they are found on islands or mainlands for the GLMM
+
+AllReptiles <- AllReptiles %>%
+ mutate(RealmPlus = ifelse(MainBiogRealm == "", "NA", paste(MainBiogRealm, ifelse(Inisland_reptiles == "Yes", "_Island", "_Mainland"), sep = "_")))
+AllReptiles
+
+#then turn them into intgers
+
+
+
+# AllReptiles$RealmPlus <- as.integer(as.character(factor(AllReptiles$RealmPlus,labels = c(NA,14,13,12,11,10,9,8,7,6,5,4,1,2,3))))
+#    AllReptiles$IUCN <- scale(AllReptiles$RealmPlus, center = T, scale = T) # z-transform variable to make it comparable
+
+#now run the GLMM
+
+GLMMrealm_NB <- glmer(Npapers1stApproach ~ RealmPlus + (1|Family), data = AllReptiles, family  = negative.binomial(theta = 1)) 
+
+
+simulateResiduals(fittedModel = GLMMrealm_NB, plot = T, n = 1000) 
+testDispersion(GLMMrealm_NB, plot = F, type = 'PearsonChisq', alternative = 'greater') #did not fit well with the negative binomial but we dont have many other options
+
+summary(GLMMrealm_NB)
+
+GLMMrealm_coef <- fixef(GLMMrealm_NB)
+
+### POST HOC P VALUE COMPARISON
+
+Realm_MCP <- glht(GLMMrealm_NB, linfct = mcp(RealmPlus = "Tukey"))
+
+summary(Realm_MCP)
+
+#Do we need to correct this for size of the realm? like dividing the number of studies by the size of the realm
+
+
+```
+
+```{r}
+
+# Calculate average papers per family
+average_papers_per_family <- AllReptiles %>%
+  group_by(Suborder, Family) %>%
+  summarize(AveragePapers = mean(Npapers1stApproach, na.rm = TRUE)) %>%
+  mutate(Family = reorder(Family, -AveragePapers)) %>%
+  arrange(Suborder, -AveragePapers)
+
+#can also arrange in random order but still in grouped into orders 
+#################################################################################
+#average_papers_per_family <- AllReptiles %>%
+  #group_by(Order, Family) %>%
+  #summarize(AveragePapers = mean(Npapers3rdApproach, na.rm = TRUE)) %>%
+  #mutate(Family = factor(Family, levels = unique(Family)))
+#################################################################################
+
+
+# Create empty bars for spacing
+empty_bar <- 20
+to_add <- data.frame(matrix(NA, empty_bar * nlevels(average_papers_per_family$Suborder), ncol(average_papers_per_family)))
+colnames(to_add) <- colnames(average_papers_per_family)
+to_add$Suborder <- as.character(to_add$Family)
+to_add$Family <- rep(levels(average_papers_per_family$Suborder), each = empty_bar)
+average_papers_per_family <- rbind(average_papers_per_family, to_add)
+average_papers_per_family <- average_papers_per_family %>% arrange(Family, Suborder)
+average_papers_per_family$id <- seq(1, nrow(average_papers_per_family))
+
+# Get the name and the y position of each label
+label_data <- average_papers_per_family
+number_of_bar <- nrow(label_data)
+angle <- 90 - 360 * (label_data$id - 0.5) / number_of_bar
+label_data$hjust <- ifelse(angle < -90, 1, 0)
+label_data$angle <- ifelse(angle < -90, angle + 180, angle)
+
+# Create a circular bar plot
+p <- ggplot(average_papers_per_family, aes(x = as.factor(id), y = AveragePapers, fill = Suborder)) +
+  geom_bar(stat = "identity", alpha = 0.5) +
+  ylim(-100, 120) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = unit(rep(-1, 4), "cm")
+  ) +
+  scale_y_continuous(trans = "log2") +
+  coord_polar(start = 0) +
+  geom_text(data = label_data, aes(x = id, y = AveragePapers + 10, label = paste(Family, round(AveragePapers, 2)), hjust = hjust),
+            color = "black", fontface = "bold", alpha = 0.6, size = 2.5, angle = label_data$angle, inherit.aes = FALSE)+
+  labs(fill = "Suborder")
+
+# Display the plot
+print(p)
+
+```
+
+new table on what famalies are least studied
+
+```{r}
+unique_families <- unique(AllReptiles$Family)
+
+family_names <- character()
+zero_studies_proportion <- numeric()
+species_count <- numeric()
+island_proportion <- numeric()
+total_species_count <- numeric()
+
+for (family in unique_families) {
+  # Subset the data for the current family
+  family_data <- subset(AllReptiles, Family == family)
+  zero_studies_count <- sum(family_data$Npapers1stApproach == 0) #find how many have 0 studies
+  total_species <- nrow(family_data)
+  island_species <- sum(family_data$Inisland_reptiles == "Yes") #find the proportions for these
+  #make output into vectors 
+  family_names <- c(family_names, family)
+  zero_studies_proportion <- c(zero_studies_proportion, zero_studies_count / total_species)
+  species_count <- c(species_count, total_species)
+  island_proportion <- c(island_proportion, island_species / total_species)
+  total_species_count <- c(total_species_count, total_species)
+  
+}
+
+#new data frame
+study_rank <- data.frame(
+  Family = family_names,
+  ZeroStudiesCount = zero_studies_proportion * species_count,
+  ZeroStudiesPercentage = 100 * zero_studies_proportion,
+  PercentageIslandSpecies = 100 * island_proportion,
+  SpeciesCount = species_count
+  
+)
+
+least_studied <- study_rank[order(study_rank$ZeroStudiesPercentage, decreasing = TRUE), ]
+
+# Select the top 10 families
+ten_least_studied <- head(least_studied, 10)
+
+# Print the result
+print(ten_least_studied)
+write.csv(ten_least_studied, file = "Least_Studied_Famalies.csv", row.names = FALSE)
+
+####Also for the most studied Famalies
+
+family_summary <- AllReptiles %>%
+  group_by(Family) %>%
+  summarize(
+    MeanStudies = mean(Npapers1stApproach, na.rm = TRUE),
+    NumSpecies = n(),
+    PercentOnIslands = sum(Inisland_reptiles == "Yes") / n() * 100,
+    TotalPapers = sum(Npapers1stApproach, na.rm = TRUE)
+  )
+
+ten_most_studied <- family_summary[order(-family_summary$MeanStudies), ] %>% head(10)
+
+write.csv(ten_most_studied, file = "Most_Studied_Famalies.csv", row.names = FALSE)
+
+```
+
+```{r}
+kruskal_family <- kruskal.test(AveragePapers ~ Family, data = average_papers_per_family)
+kruskal_family
+```
+
+standarsing data for a GLMM of all factors
+
+```{r}
+e1071::skewness(AllReptiles$BodyMass, na.rm = T); e1071::kurtosis(AllReptiles$BodyMass, na.rm = T) #very high kurtosis means sharp peak and long tail to data and also slight right skew
+#conclusion for all data is that it should be log 10 transformed 
+
+for (i in 1) {
+  AllReptiles$StdYear <- scale(AllReptiles$Year, center = T, scale = T)
+  AllReptiles$LogBodyMass <- scale(log10(AllReptiles$BodyMass), center = T, scale = T)
+  AllReptiles$LogRangeSize <- scale(log10(AllReptiles$RangeSize), center = T, scale = T)
+  AllReptiles$LogElevation <- scale(log10(AllReptiles$Elevation+1), center = T, scale = T)
+  AllReptiles$LogRangeRarity <- scale(log10(AllReptiles$RangeRarity), center = T, scale = T)
+  AllReptiles$LogNumBioInst <- scale(log10(AllReptiles$TotBiodInst+1), center = T, scale = T)
+  
+}
+
+
+summary(AllReptiles$ThreatStatus)
+unique(AllReptiles$ThreatStatus) 
+
+AllReptiles$IUCN <- as.integer(as.character(factor(AllReptiles$ThreatStatus,labels = c(5,NA,4,NA,1,2,3))))
+AllReptiles$IUCN <- scale(AllReptiles$IUCN, center = T, scale = T) # z-transform variable to make it comparable
+
+#check for multicollinearity
+vars <- AllReptiles[ , 39:38]
+usdm::vif(vars); rm(vars)
+
+
+levels(AllReptiles$MainBiogRealm)
+
+levels(AllReptiles$MainBiogRealm) # Australasia is missing an 'a'; fixing it next 
+AllReptiles$MainBiogRealm <- factor(AllReptiles$MainBiogRealm,
+                               labels = c(" ", "Afrotropic","Australasia","IndoMalay","Neartic","Neotropic","Oceania","Paleartic"))
+
+
+colnames(AllReptiles)
+
+dataset <- AllReptiles%>%
+  dplyr::select(Species, Npapers1stApproach, Family, MainBiogRealm, StdYear:IUCN)
+summary(dataset)
+
+dataset <- droplevels(dataset[complete.cases(dataset) , ])
+
+dataset                      
+                      
+```
+
+Running different GLMMs
+
+```{r}
+GLMM1 <- glmer(Npapers1stApproach ~ LogBodyMass + LogRangeSize + (1|Family), data = dataset, family = poisson(link = log))
+
+simulateResiduals(fittedModel = GLMM1, plot = T, n = 1000) 
+testDispersion(GLMM1, plot = F, type = 'PearsonChisq', alternative = 'greater') #plotting resiuduals and we can see that it is not a great fit 
+
+
+GLMM1_NB <- glmer(Npapers1stApproach ~ LogBodyMass + LogRangeSize + (1|Family), data = dataset, family = negative.binomial(theta = 1))  #theta is the dispersion value
+GLMM1_NB # suggests increase in bodymass or range size is associated in an increase in the number of papers publised on that species 
+
+simulateResiduals(fittedModel = GLMM1_NB, plot = T, n = 1000) 
+testDispersion(GLMM1_NB, plot = F, type = 'PearsonChisq', alternative = 'greater') #negative binomial residuals plot better 
+
+GLMM2 <- glmer(Npapers1stApproach ~ LogElevation + LogRangeRarity + (1|Family), data = dataset, family =   poisson(link = log))
+GLMM2
+simulateResiduals(fittedModel = GLMM2, plot = T, n = 1000) 
+testDispersion(GLMM2, plot = F, type = 'PearsonChisq', alternative = 'greater')
+
+GLMM2_NB <- glmer(Npapers1stApproach ~ LogElevation + LogRangeRarity + (1|Family), data = dataset, family  = negative.binomial(theta = 1))
+GLMM2_NB # suggests elevation and range rarity both have a negative impact on papers published on a species 
+simulateResiduals(fittedModel = GLMM2_NB, plot = T, n = 1000) 
+testDispersion(GLMM2_NB, plot = F, type = 'PearsonChisq', alternative = 'greater') #only slightly better this time for fitting the residuals
+
+GLMMALL <- glmer(Npapers1stApproach ~ LogElevation + LogRangeRarity + StdYear + LogBodyMass + LogNumBioInst + IUCN + LogRangeSize + (1|Family), data = dataset, family  = negative.binomial(theta = 1))#global GLMM
+
+simulateResiduals(fittedModel = GLMMALL, plot = T, n = 1000) 
+testDispersion(GLMMALL, plot = F, type = 'PearsonChisq', alternative = 'greater') 
+
+summary(GLMMALL)
+
+save(GLMMALL, file = 'nbGLMM_global.Rdata')
+
+rm(list=setdiff(ls(), c("mydata", "dataset", "nbmod")))
+load("nbGLMM_global.Rdata")
+ranef(GLMMALL) #intercepts for familys, showing the intercept which can be plotted to show which families are affected by these factors more than others
+
+
+fixef(GLMMALL) #what we need for making the dot plot on the direction of the different affects on the number of studies
+
+#lattice package can also be used to plot slopes for the random or fixed affects
+
+#circular bar plot can also plot the intercept for the random effects of the families. same as the one made before but just looking at intercept instead
+global_model <- update(GLMMALL, na.action = na.fail)
+
+#######Using model selection to find the most optimal model for the GLMM
+
+dredge(global_model)
+
+```
+
+making a plot for the GLMM
+
+```{r}
+#splitting the main dataset into island and mainland for the GLMM
+
+###Island Reptiles 
+
+
+dataset_ONI <- AllReptiles %>%
+  dplyr::filter(Inisland_reptiles == "Yes") %>%
+  dplyr::select(Species, Npapers1stApproach, Family, MainBiogRealm, StdYear:IUCN)
+summary(dataset_ONI)
+
+
+dataset_ONI <- droplevels(dataset_ONI[complete.cases(dataset_ONI) , ])
+
+head(dataset_ONI)
+
+#run the GLMM
+
+GLMM_ONI <- glmer(Npapers1stApproach ~ LogElevation + LogRangeRarity + StdYear + LogBodyMass + LogNumBioInst + LogRangeSize + IUCN + (1|Family), data = dataset_ONI, family  = negative.binomial(theta = 1))
+
+simulateResiduals(fittedModel = GLMM_ONI, plot = T, n = 1000) 
+testDispersion(GLMM_ONI, plot = F, type = 'PearsonChisq', alternative = 'greater') 
+
+vif(GLMM_ONI) #Checking for multicollinearity in the GLMM values of 5 or more are indicative of that. 
+
+summary(GLMM_ONI, type = "both")
+save(GLMM_ONI, file = 'nbGLMM_ON_Islands.Rdata')
+
+performance::r2(GLMM_ONI)
+
+###Finding the most useful model to use
+All_ONI<- update(GLMM_ONI, na.action = na.fail)
+
+d1 <- dredge(All_ONI,  m.lim = c(6,7)) #the best model actually didnt include IUCN as a factor but the next best model did with little difference so Will inculude it most likley
+#  save(d1, file = 'GLMMONI_limited_dredge.Rdata') # so that we dont have to rerun i 
+
+load("GLMMONI_limited_dredge.Rdata")
+d1[1,] #the most usefull model we will use for modle averaging 
+
+load("nbGLMM_ON_Islands.Rdata")
+
+###Mainland Reptiles
+
+dataset_OFFI <- AllReptiles %>%
+  dplyr::filter(Inisland_reptiles == "No") %>%
+  dplyr::select(Species, Npapers1stApproach, Family, MainBiogRealm, StdYear:IUCN)
+summary(dataset_OFFI)
+
+
+dataset_OFFI <- droplevels(dataset_OFFI[complete.cases(dataset_OFFI) , ])
+
+dataset_OFFI  
+
+
+GLMM_OFFI <- glmer(Npapers1stApproach ~ LogElevation + LogRangeRarity + StdYear + LogBodyMass + LogNumBioInst + LogRangeSize + IUCN + (1|Family), data = dataset_OFFI, family  = negative.binomial(theta = 1))
+
+simulateResiduals(fittedModel = GLMM_OFFI, plot = T, n = 1000) 
+testDispersion(GLMM_OFFI, plot = F, type = 'PearsonChisq', alternative = 'greater') 
+
+summary(GLMM_OFFI)
+
+performance::r2(GLMM_OFFI)
+
+
+vif(GLMM_OFFI) #Checking for multicollinearity in the GLMM values of 5 or more are indicative of that. 
+
+###Finding the most usefull model based on AIC
+All_OFFI<- update(GLMM_OFFI, na.action = na.fail)
+
+d3 <- dredge(All_OFFI, trace = 2,  m.lim = c(6,7)) #the most useful model for non island reptiles does not include elevation
+save(d3, file = 'GLMMOFFI_limited_dredge.Rdata')
+d2 #the full list of combinations that takes a very long time to run so we limited it to only models that have 6 or 7 facotrs as we knew the best ones had 6 or 7
+save(d2, file = 'GLMMONI_full_dredge.Rdata')
+
+load("GLMMONI_full_dredge.Rdata")
+d2
+
+load("GLMMOFFI_limited_dredge.Rdata")
+d3[1,]
+
+save(GLMM_OFFI, file = 'nbGLMM_OFF_Islands.Rdata')
+
+###Model Averaging, testing multiple hypothesis and finding the best mix of them 
+
+
+list(GLMM_ONI)
+summary(model.avg(d3, subset = delta < 2)) #use <2 for delta as these are the models that are as good as the top model
+summary(model.avg(d1, subset = delta < 2))
+
+
+AIC(GLMM_OFFI)
+
+
+###plot fixed effects
+load("nbGLMM_ON_Islands.Rdata")
+load("nbGLMM_OFF_Islands.Rdata")
+coefficients_ONI <- fixef(GLMM_ONI)
+coefficients_OFFI <- fixef(GLMM_OFFI)
+
+
+all_coefficients <- c(coefficients_ONI, coefficients_OFFI)
+
+
+#Create a dataframe
+df_coefficients <- data.frame(
+  df_coefficients <- data.frame(
+  Factor = rep(names(all_coefficients)),  # Each factor repeats twice for ONI and OFFI
+  Coefficient = rep(all_coefficients),    # Coefficients repeat twice for ONI and OFFI
+  Dataset = rep(c("Island", "Mainland"), each = length(all_coefficients) / 2),  # Specify the dataset
+  Direction = ifelse(rep(all_coefficients,) > 0, "Positive", "Negative")
+))
+
+
+
+# Print or further analyze df_coefficients
+print(df_coefficients)
+
+###Graphing
+
+
+ggplot(df_coefficients, aes(x = Dataset, y = Factor)) +
+  geom_point(aes(size = abs(Coefficient), colour = Direction)) +
+  theme_bw() +
+  xlab("Island") +
+  ylab("Covariate") +
+  scale_colour_discrete(name = "Effect direction") +
+  scale_size_continuous(name = expression(beta), range = c(1, 10), breaks = seq(-0.05, 0.65, by = 0.1)) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 13),
+    axis.text.x = element_text(angle = 90)
+  )
+
+```
+
+Now we have a GLMM for all factors we can plot across the different realms
+
+```{r}
+formula <- Npapers1stApproach ~ LogElevation + LogRangeRarity + StdYear + LogBodyMass + LogNumBioInst + (1|Family)
+
+levels(dataset$MainBiogRealm)
+biorealm <- levels(dataset$MainBiogRealm)
+biorealm <- biorealm[-6] #ocean ia removed due to small sample size
+
+outs <- list()
+
+for (i in seq_along(biorealm)) {
+  # create subdataset containing only observations from a single biog. realm
+  subdataset = droplevels(dataset[dataset$MainBiogRealm==biorealm[i] , ])
+  
+  # fit the NB mixed model
+  nbglmm = glmmTMB(formula = formula, data = subdataset, family = nbinom2)
+  
+  print(paste0(biorealm[j], " ", performance::r2(nbglmm)))
+  
+  # residual diagnostics
+  pdf(paste("ResidPlot", biorealm[i], '.pdf', sep = '_'))
+  simulationOutput = simulateResiduals(fittedModel = nbglmm, plot = T)
+  dev.off()
+  
+  # save model 
+  save(nbglmm, file = paste("nbGLMM", biorealm[i], '.Rdata', sep = '_'))
+  
+  # get result
+  res = summary(nbglmm)
+  
+  # store coefficients
+  coefs = as.data.frame(res$coefficients$cond)
+  coefs$Predictors <- rownames(coefs) # add predictor names into a new column
+  coefs = mutate(coefs, 
+                 Realm = paste(biorealm[i]), # add realm names into a new column
+                 lower95 = Estimate - 1.96 * `Std. Error`, # get lower CI95%
+                 upper95 = Estimate + 1.96 * `Std. Error`) # get upper CI95%
+  coefs = coefs[ , c("Realm","Predictors","Estimate","Std. Error","z value","Pr(>|z|)","lower95","upper95")]
+  
+  outs[[i]] <- coefs
+  
+  rm(subdataset, nbglmm, simulationOutput, coefs)
+  
+}
+```
+
+research priority index. We hypothesise that Island species would on average rank higher than mainland ones partially due to the lack of studies overall on them
+
+```{r}
+Islandspecies <- read.csv("data/Islandspecies_CSV8.csv")
+
+
+# Assuming "Binomial" and "Species" are the respective common columns
+merged_data <- merge(AllReptiles, Islandspecies[, c("Binomial", "ERi")], by.x = "Species", by.y = "Binomial", all.x = TRUE)
+
+# View the merged data
+print(merged_data)
+
+### ROi
+
+max_papers <- max(AllReptiles$Npapers1stApproach, na.rm = TRUE)
+columns <- c("Species", "Genus", "RangeSize", "ThreatStatus", "Npapers1stApproach", "Inisland_reptiles", "ERi")
+
+research_priority <- merged_data[columns, drop = FALSE]
+
+# Calculate ROi for each species
+research_priority <- research_priority %>%
+  mutate(
+    ROi = 1 - (Npapers1stApproach / max_papers)
+  )
+  
+
+
+# Display the resulting data frame
+print(research_priority)
+
+### ERi
+
+#need to first give a value to species that are data deficient or not categorised 
+#range less than 400000km2 or 33 in the All reptiles database get 0.5. this is for non island restricted reptiles only as we already have the data for IRR and how many islands they reside on is not present in either dataset . Other than this all ERi is based on IUCN status
+
+
+
+research_priority <- research_priority %>%
+  mutate(
+    ERi = ifelse(
+      Inisland_reptiles == "No" & ThreatStatus %in% c("VU", "EN", "CR"), 1,
+      ifelse(
+        Inisland_reptiles == "No" & ThreatStatus %in% c("LC", "NT"), 0,
+        ifelse(
+          Inisland_reptiles == "No" & ThreatStatus %in% c("DD", "NC") & RangeSize > 33, 0,
+          ifelse(
+            Inisland_reptiles == "No" & ThreatStatus %in% c("DD", "NC") & RangeSize <= 33, 0.5,
+            ERi
+          )
+        )
+      )
+    )
+  )
+
+
+
+
+
+print(research_priority)
+
+### CSi
+
+
+# Calculate the total number of species in each genus
+genus_counts <- research_priority %>%
+  group_by(Genus) %>%
+  summarise(total_species = n())
+
+genus_counts
+
+# Find the most populated genus
+most_populated_genus <- genus_counts %>%
+  filter(total_species == max(total_species))
+
+most_populated <- sum(most_populated_genus$total_species)
+
+research_priority <- research_priority %>%
+  left_join(genus_counts, by = "Genus")
+  
+research_priority <- research_priority %>%
+  mutate(
+    CSi = 1 - ((total_species - 1) / (most_populated - 1)))
+
+research_priority = subset(research_priority, select = -c(total_species)) #removing the total species collumn
+print(research_priority)
+
+### ROCSi
+
+
+#find the total number of papers published in reptiles genus not including its own publications
+
+research_priority <- research_priority %>%
+  group_by(Genus) %>%
+  mutate(total_research_output_within_genus = sum(Npapers1stApproach) - Npapers1stApproach) %>%
+  ungroup()
+
+
+#finding the highest ammount of papers published in any genus
+genus_max_research <- research_priority %>%
+  group_by(Genus) %>%
+  summarize(total_max_research = sum(Npapers1stApproach)) %>%
+  ungroup()
+  
+  
+genus_with_highest_total_research <- genus_max_research %>%
+  filter(total_max_research == max(total_max_research))
+ 
+most_studied_genus <- sum(genus_with_highest_total_research$total_max_research)
+
+
+#calculating ROCSi 
+research_priority <- research_priority %>%
+  mutate(ROCSi = 1 - (total_research_output_within_genus / most_studied_genus))
+
+research_priority = subset(research_priority, select = -c(total_research_output_within_genus)) #removing the total_research_output_within_genus column
+
+print(research_priority)
+
+###RPM
+
+research_priority <- research_priority %>%
+  mutate(RPM = ROi + ERi + 0.5  * CSi + 0.5 * ROCSi)
+
+print (research_priority)
+write.csv(research_priority, file = "Complete_Reptile_Research_Prioritisation_Metric.csv", row.names = FALSE)
+
+top_15_rpm <- research_priority %>%
+  arrange(desc(RPM)) %>%
+  head(15)
+
+# Print the top 10 RPM values
+print(top_15_rpm)
+
+write.csv(top_15_rpm, file = "Reptile_Research_Prioritisation_Metric.csv", row.names = FALSE)
+
+```
+
+phylogenetic tree code
+
+```{r}
+library(ape)
+library(cluster) 
+library(RColorBrewer)
+library(ggplot2)
+library(dplyr)
+library(tidytree)
+library(treeio)
+library(data.table)
+library(ggtree)
+library(plyr)
+
+rt <- "( 
+  (Scincoidea, Anguimorpha, Iguania),
+  (Lacertiformes, Serpentes, Gekkota),
+  (Pleurodira, Cryptodira, Dibamidae),
+  (Crocodylia, Rhynchocephalia)
+);" #place holder structure of the tree
+
+rttree <- read.tree(text = rt)
+
+# Check the structure of the phylogenetic tree
+plot(rttree)
+
+suborder_labs <- rttree$tip.label
+
+x = as_tibble(rttree)
+
+
+d <- read.csv(choose.files())
+
+
+
+# Select relevant columns
+columns <- c("Species", "Suborder", "ThreatStatus", "Npapers1stApproach")
+d <- d[columns]
+
+# Calculate number of threatened species per suborder
+d$threatened <- ifelse(d$ThreatStatus %in% c("VU", "EN", "CR"), 1, 0)
+threatened_per_Suborder <- aggregate(threatened ~ Suborder, data = d, sum)
+
+# Merge threatened species counts with the main dataframe
+d <- merge(d, threatened_per_Suborder, by = "Suborder", all.x = TRUE)
+
+
+colnames(d)[colnames(d) == "threatened.x"] <- "IsThreatened"
+colnames(d)[colnames(d) == "threatened.y"] <- "threatened"
+
+
+# Calculate studies per threatened species
+d$studspersp <- d$Npapers1stApproach / d$threatened
+d$label <- d$Suborder 
+
+d$studspersp[d$studspersp == 0] <- NA
+
+
+# Join tree data with species data may have to remove suborders with no threatned species
+treecon <- full_join(x, d, by = "label")
+treecon1 <-  as.treedata(treecon) 
+
+str(treecon1)
+
+breaks <- seq(0,round_any(max(treecon$studspersp,na.rm=TRUE), 10, f = ceiling)  ,length.out=5)
+data.limits <- c(0,round_any(max(treecon$studspersp,na.rm=TRUE),10, f = ceiling))
+  
+ggtree(treecon1, layout="fan", open.angle=45) + 
+  geom_tiplab2(hjust=-0.25, size=5.95) + 
+  geom_tippoint(aes(fill=studspersp),shape=21,size=15)+
+  scale_fill_gradientn(name="Studies per species",breaks=breaks,limits=data.limits,
+                       colours=c("white",(brewer.pal(n=9, name="Blues"))[1:9]),
+                       na.value="grey50")+
+  theme(legend.position=c(0.95,0.45),axis.text = element_text(size=15),
+        legend.text = element_text(size=17),
+        legend.title = element_text(size=20))+xlim(0,3)
+
+
+
+```
+
